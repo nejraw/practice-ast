@@ -1,0 +1,165 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { CharacterStrip } from "@/courses/ast/features/tokenizing/CharacterStrip";
+import { TokenStream } from "@/courses/ast/features/tokenizing/TokenStream";
+
+Lesson 1 went from characters straight to a tree. In practice that happens in two steps.
+First the characters are grouped into **tokens**: the words of the code. Then those
+tokens are arranged into a tree. This lesson is about the first step, called
+**tokenizing**. In V8 the part that does it is called the *scanner*; elsewhere you'll
+also see *lexer*.<Cite id="v8-scanner" /><Cite id="nystrom-scanning" />
+
+## From characters to tokens
+
+Here's the input again, one character per cell:
+
+<CharacterStrip code="price * quantity + tax" />
+
+A token is the smallest piece of code that means something on its own: a name, a number,
+a string, an operator.<Cite id="v8-scanner" /> The tokenizer walks along the characters
+and cuts them into those pieces:
+
+<TokenStream code="price * quantity + tax" />
+
+Hover a token to see which characters it came from, or click in the code to find the token
+under your cursor. Try adding a number, a string or a keyword like `const`.
+
+Each token records its **type** (a name, an operator) and the **start and end** position of
+its characters.<Cite id="acorn" /> Those positions travel with the code all the way into
+the tree, which is how an error message can still point at the right column.
+
+## What gets thrown away
+
+The dashed boxes are what the tokenizer **skips**: spaces, tabs and comments. Add a
+`// comment` to the code above and you'll see it skipped too. The tree never hears about
+any of it, which is part of why the tree is *abstract*.<Cite id="mdn-lexical" />
+
+<Aside>Comments aren't destroyed, just set aside. Acorn, for example, can hand them to you as a separate list, so a tool that needs them can keep them.<Cite id="acorn" /></Aside>
+
+Newlines are the exception. They're skipped too, but the tokenizer **notes whether one
+occurred** before each token,<Cite id="v8-scanner" /> because in JavaScript a line break
+can change the meaning:
+
+```js
+return
+  price * quantity;
+```
+
+This returns `undefined`. A line break after `return` ends the statement, so the
+calculation on the next line never becomes the return value.<Cite id="ecma-asi" /><Cite id="mdn-lexical" />
+That rule belongs to the parser, but the parser can only apply it because the tokenizer
+remembered the newline.
+
+## Longest match wins
+
+How should `a+++b` be split? It could be `a + ++b` or `a++ + b`. The tokenizer doesn't
+weigh the options. It follows one simple rule: at every position, take the **longest
+token** that fits.<Cite id="nystrom-scanning" /><Cite id="wiki-maximal-munch" /> `+++`
+starts with `++`, so that comes first:
+
+<TokenStream title="The longest match wins" code="a+++b" presets={["a+++b", "a+ ++b", "a+++++b"]} />
+
+Try `a+++++b`. The tokenizer happily produces `a ++ ++ + b`, even though that doesn't make
+sense: you can't apply `++` to `a++`. So the code is a syntax error, while `a++ + ++b`,
+which uses the same characters, would have been fine. The tokenizer doesn't check
+grammar; that's the parser's job, and it gets the tokens exactly as cut.<Cite id="nystrom-scanning" />
+
+<Aside>To pick the right token, V8's scanner sometimes has to look up to four characters ahead: the longest ambiguous sequence in JavaScript.<Cite id="v8-scanner" /></Aside>
+
+## Same character, different token
+
+Most of the time, the tokenizer only needs to look at the characters in front of it. The
+`/` is where that breaks down. Compare these two lines:
+
+<TokenStream title="Division or regular expression?" code="x = a / b / g" presets={["x = a / b / g", "x = /b/g"]} />
+
+The first line divides twice. The second is a single token: a regular expression. The
+characters `/b/g` are the same in both; what differs is **what came before**. After a
+value like `a`, a `/` can only mean division. Where a value is *expected*, such as right
+after `=`, it can only start a regular expression.
+
+So the tokenizer has to know where it is in the grammar. Does that mean tokenizing and
+parsing melt into one step? No. They stay **two separate jobs**: the tokenizer only cuts
+characters into tokens, and the parser only arranges tokens into a tree. What changes is
+the *timing*. Instead of tokenizing the whole file first and parsing it afterwards, they
+**take turns**. Whenever the parser needs the next token, it asks for one, and the
+tokenizer cuts just that one.<Cite id="acorn" /><Cite id="v8-scanner" /> Because the two
+work in step, the tokenizer can know at every moment whether a value is expected.
+
+Here's how that goes for `x = /b/g`:
+
+| Turn | Where the parser is | The tokenizer cuts |
+| --- | --- | --- |
+| 1 | at the start of a statement | `x`, a name |
+| 2 | after a name | `=`, an operator |
+| 3 | after `=`, so a **value is expected** | `/b/g`, a regular expression |
+
+In `x = a / b / g`, the fourth turn comes right after the value `a`. No value is expected
+there, so the tokenizer cuts `/` as a division operator.
+
+The order still holds: every token is cut before the parser
+uses it. The two steps just alternate, token by token. The language specification builds
+this in. It defines several starting rules for tokenizing, one for places where a regular
+expression is allowed and others for places where it isn't, and the grammar decides which
+one applies.<Cite id="ecma-lexical" />
+
+That's the theme of this lesson: tokenizing looks like the easy part, but in JavaScript
+the tokenizer regularly needs a hint from the grammar. The next lesson is about that
+grammar, and how the parser turns this flat list of tokens into a tree.
+
+<Check question="How many tokens does `let total=price*2;// euros` give, and which characters are skipped?">
+
+Seven: `let`, `total`, `=`, `price`, `*`, `2` and `;`. The comment is skipped. There are no
+spaces to skip here, and none are needed: a name simply ends at the first character that
+can't be part of a name, such as `=` or `*`. The only space that matters is the one
+between `let` and `total`, since `lettotal` would be one name. Paste it into the first
+figure to check.
+
+</Check>
+
+> a tokenizer cuts characters into words; in JavaScript, what a word *is* can depend on what came before.
+
+<Deeper about="template literals, which line breaks matter, and words that are only sometimes keywords">
+
+### Strings with code inside
+
+Template literals raise a similar problem. The text between the backticks is a string,
+except inside `${ }`, where it's code again:<Cite id="mdn-template" />
+
+<TokenStream title="A template literal, split up" code="`Hi ${name}, you have ${count} items`" />
+
+The tokenizer splits the template into pieces of text, with ordinary tokens in between.
+And when it reaches a `}`, it has to know whether that `}` closes a placeholder (and
+returns to text) or just closes an object inside the placeholder. Again, it needs to keep
+track of what came before.<Cite id="ecma-lexical" />
+
+### Which line breaks matter
+
+The `return` example might suggest that every line break ends a statement. Most don't. A
+semicolon is only inserted at a line break in two cases: when the next token can't
+continue the statement, or when the grammar forbids a line break at that spot.<Cite id="ecma-asi" />
+That second list is short: after `return`, `throw`, `break`, `continue` and `yield`,
+before a postfix `++` or `--`, and before an arrow's `=>`, among a few others.<Cite id="mdn-lexical" />
+
+The first case catches people out the other way round. A line that starts with `(`, `[`
+or a backtick *can* continue the line before it, so no semicolon is inserted:<Cite id="mdn-lexical" />
+
+```js
+const a = b
+(c || d).run()
+```
+
+This is one statement, `const a = b(c || d).run()`: `b` gets called. The tokenizer noted
+the newline, and the parser decided it didn't matter.
+
+### Keywords that aren't
+
+Look at how `let` is labelled:
+
+<TokenStream title="Which words are keywords?" code="let of = 1; const list = [of];" />
+
+`const` is a keyword. `let` is a *name*, and so is `of`. Words like `let`, `of`, `async`
+and `get` only have a special meaning in certain places, and they're valid variable names
+everywhere else (`let` only outside strict mode code).<Cite id="mdn-lexical" /> The tokenizer can't tell which
+case it's in, so it leaves them as names and lets the parser decide.
+
+</Deeper>

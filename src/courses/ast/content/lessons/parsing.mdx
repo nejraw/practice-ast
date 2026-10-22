@@ -1,0 +1,189 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { CompareTrees } from "@/courses/ast/features/parsing/CompareTrees";
+import { ExpressionTree } from "@/courses/ast/features/parsing/ExpressionTree";
+import { GrammarBoxes } from "@/courses/ast/features/parsing/GrammarBoxes";
+import { ParseStepper } from "@/courses/ast/features/parsing/ParseStepper";
+
+Lesson 3 cut the code into tokens. Now the **parser** arranges those tokens into a tree. It
+doesn't guess the shape: it follows the **grammar** of the language, a set of rules that
+say which tokens may follow which, and how the pieces nest.<Cite id="nystrom-parsing" />
+
+## Grammar rules
+
+A grammar describes what each piece of code is **made of**. You know the idea from
+ordinary language: "a sentence is a subject followed by a verb". A grammar for code says
+the same kind of thing about expressions and statements.<Cite id="nystrom-representing" />
+
+Let's build one for arithmetic, in three small steps.
+
+**Step 1: a sum.** `a + b + c` is a list of names with `+` between them. As a rule:
+
+```
+expression → name ("+" name)*
+```
+
+The notation takes four symbols:<Cite id="nystrom-representing" />
+
+| Symbol | Read it as |
+| --- | --- |
+| `→` | "is made of" |
+| `"+"` | exactly this token |
+| `( … )*` | the part inside, repeated any number of times, including zero |
+| `\|` | "or" |
+
+So the rule says: an expression is a name, followed by any number of times a `+` and
+another name. `a`, `a + b` and `a + b + c` all fit. `a +` doesn't: after a `+`, the rule
+demands a name.
+
+**Step 2: multiplication.** `a + b * c` has to multiply first. The trick is to split the
+rule into two levels: an expression is a sum of **terms**, and a term is a product of
+names.
+
+```
+expression → term ("+" term)*
+term       → name ("*" name)*
+```
+
+Now `a + b * c` is a sum of two terms: `a`, and `b * c`. The `*` is handled by the lower
+rule, so `b * c` is already a finished piece by the time the `+` gets to see it. That is
+how a grammar encodes precedence: the operator that binds tightest gets the lowest
+rule.<Cite id="nystrom-parsing" />
+
+**Step 3: parentheses.** To allow `(a + b) * c`, the pieces of a product must be able to
+be a whole expression in parentheses. Those pieces get their own rule, **factor**. Adding
+`-`, `/` and `%` as well gives the complete grammar:
+
+```
+expression → term   (("+" | "-") term)*
+term       → factor (("*" | "/" | "%") factor)*
+factor     → number | name | "(" expression ")"
+```
+
+Notice that the last rule points back to the first: a factor can contain an expression,
+which contains terms, which contain factors. That loop is what lets code nest as deeply as
+you like.
+
+Here is how actual code fits these rules. Every box is one rule matching a run of tokens:
+
+<GrammarBoxes code="a + b * c" presets={["a + b", "a + b * c", "(a + b) * c", "2 * (a - b) % n"]} />
+
+Some boxes carry several names, like `expression = term = factor` around a lone `a`. A
+single name is a factor; on its own it is also a complete term (a product of one factor)
+and a complete expression (a sum of one term). And compare the boxes with the trees from
+lesson 1: every box with an operator inside becomes a `BinaryExpression`. The grammar
+decides the shape; the tree records it.
+
+## One function per rule
+
+How does a program apply these rules? The most common way is to write **one function per
+rule**. Each function reads the tokens its rule describes, calls the functions for the
+rules inside it, and returns the node it built. Every rule name on a box in the figure
+above is one such function call. This is called a **recursive descent**
+parser.<Cite id="wiki-recursive-descent" /><Cite id="nystrom-parsing" /> Acorn, the parser
+behind every tree in this course, is a recursive descent parser too.<Cite id="acorn-expression" />
+
+Here is the grammar as a working parser. Press **Step** and follow along:
+
+<ParseStepper code="a + b * c" presets={["a + b * c", "(a + b) * c", "a - b - c", "a * (b + c"]} />
+
+<Aside>This little parser builds exactly the same nodes as Acorn does for these expressions. The course's tests check that.</Aside>
+
+A few things to watch for:
+
+- **The calls go down, the tree grows up.** The parser starts at the top rule and calls its
+  way down to `factor`. But nodes are built from the leaves upward: first `a`, `b` and `c`,
+  then `b * c`, and only at the very end the `+` that holds everything.
+- **The call stack is the parser's memory.** When `term()` holds `b * …`, it has read the
+  `*` and is waiting for its right-hand side. That lives only in the unfinished call.
+- **Parentheses never become nodes.** In `(a + b) * c`, `factor()` reads the `(`, the
+  expression inside and the `)`, and returns just the expression. The parentheses have
+  done their job: they decided which call built which node.
+- **One token at a time.** The parser decides what to do by looking only at the *next*
+  token. That's why lesson 3's tokenizer can hand them over one by one. JavaScript's own
+  grammar nearly manages this too; "Going deeper" shows the spot where it can't, and the
+  trick that saves it.
+
+## When the tokens don't fit
+
+The parser's whole job is to fit the tokens into these rules. When it can't, that's a
+**syntax error**. Pick one of these broken inputs:
+
+<GrammarBoxes title="Tokens that don't fit" code="a * (b + c" presets={["a * (b + c", "a + * b", "a b"]} />
+
+In `a * (b + c`, the factor rule has read `(` and a whole expression, and now demands a
+`)`. The code ends instead. Pick the same input in the stepper above to watch `factor()`
+run into it. That moment *is* the syntax error: a rule expected one thing
+and got another, and the error message points at that spot.
+
+This is also why lesson 2's syntax error stopped the whole script. The parser can't build
+a tree that the grammar doesn't allow, and without a tree there is nothing to run.
+
+## A JavaScript surprise
+
+The parser follows the rules exactly, even when the result isn't what you meant. This
+arrow function looks like it returns an object, but it returns `undefined`:
+
+<CompareTrees left="() => ({ total: 1 })" variants={["() => { total: 1 }"]} />
+
+A `{` could open an object or a block of statements. After `=>`, JavaScript's grammar
+settles it with a rule: the body is a single expression only if the next token is *not*
+a `{`.<Cite id="mdn-arrow" /> So without the parentheses, the `{` opens the function
+body, and `total:` is read as a **label**, a rarely used feature for naming
+loops.<Cite id="mdn-arrow" /> Statements have the same kind of rule: one that starts with
+`{` is always a block, never an object.<Cite id="ecma-expression-statement" /> The tree on the right shows exactly what the
+parser understood.
+
+The next lesson picks up the finished tree and follows it into bytecode.
+
+<Check question="In `(a + b) * c`, which function builds the node at the root of the tree, and where did the parentheses go?">
+
+`term()` builds the root: it's the `*`, made from the factor `(a + b)` and the factor `c`.
+The parentheses were read by `factor()`, which returned only the `+` node inside them.
+That's why lesson 1 found no node for parentheses in the tree.
+
+</Check>
+
+> the grammar decides the shape of the tree; the parser fits the tokens into it, and a syntax error is a token that doesn't fit.
+
+<Deeper about="precedence climbing, associativity, and when the parser can't decide yet">
+
+### Acorn's shortcut for operators
+
+Acorn follows the one-function-per-rule recipe, but not for binary operators.
+JavaScript has more than a dozen precedence levels, and one function per level would
+mean a dozen nested calls just to read a single name. So Acorn handles all binary
+operators in one function that compares each operator's precedence with the one it's
+working inside, a technique called **precedence climbing**.<Cite id="acorn-expression" /><Cite id="wiki-operator-precedence" />
+The trees come out the same.
+
+### Which side groups first
+
+How should `a - b - c` be read? As `(a - b) - c`. In the stepper you can see why: the
+loop in `expression()` keeps joining whatever it holds with the next term, so the tree
+leans to the left. Most operators work like this: they are
+**left-associative**.<Cite id="nystrom-parsing" /> Exponentiation and assignment group the
+other way: `a ** b ** c` means `a ** (b ** c)`, and `a = b = c` means
+`a = (b = c)`.<Cite id="mdn-precedence" /> Try them:
+
+<ExpressionTree code="a - b - c" title="Which way does the tree lean?" />
+
+### The real grammar
+
+JavaScript's grammar in the specification is built the same way as ours, just with many
+more levels. Its rule for `+` and `-` reads: an `AdditiveExpression` is a
+`MultiplicativeExpression`, or an `AdditiveExpression` followed by `+` or `-` and a
+`MultiplicativeExpression`.<Cite id="ecma-additive" />
+
+### When the parser can't decide yet
+
+Our grammar never hesitates: the next token always says what to do. Real JavaScript isn't
+always that kind. As the V8 team put it, "it isn't always clear from the start what the
+meaning of a partial expression is."<Cite id="v8-preparser" /> When the parser sees
+`(a, b)`, it can't know yet whether that's an expression in parentheses or the parameters
+of an arrow function; it only finds out at the `=>`. The specification handles this with a
+**cover grammar**: the parser reads a general form that covers both meanings, then refines
+it once it knows.<Cite id="ecma-cover" /> That's how it keeps working one token at a time:
+instead of looking ahead for a `=>` that may be many tokens away, it reads `(a, b)` once,
+and only decides what it was when the next token arrives.
+
+</Deeper>

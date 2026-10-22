@@ -1,0 +1,147 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { TransformPlayground } from "@/courses/ast/features/transform/TransformPlayground";
+import { TypeStripper } from "@/courses/ast/features/transform/TypeStripper";
+import { transformExample, typeStripPresets } from "@/courses/ast/content/examples";
+
+Every tool that changes your code starts by parsing it. Babel and codemods then take
+the full route, in three steps: **parse** the code into a tree, **transform** the tree,
+then **generate** code from the changed tree.<Cite id="babel-handbook" /> A tool that works
+this way never edits your text directly. It edits the tree and prints new text from it.
+
+<Aside>Smaller changes often take a shortcut: use the tree only to find *where* to change, then edit the text at those positions. ESLint's fixes work that way,<Cite id="eslint-custom-rules" /> and so did the renames in lessons 2 and 6. This lesson is about the full route.</Aside>
+
+## Change the tree, not the text
+
+Pick a change and look at what happens to the tree. Each one is a few lines of code that
+look for a node and change a field, remove a node or replace one:
+
+<TransformPlayground code={transformExample} />
+
+**var → let** finds every `VariableDeclaration` whose `kind` is `"var"` and sets it to
+`"let"`. That's the whole change: one string field per declaration. **remove console.log**
+takes a statement out of its parent's list of statements.
+
+<Aside>Changing the tree guarantees the new code is well-formed: every node prints as a piece of JavaScript. It doesn't guarantee the code is valid, let alone that it does the same thing. Unlike `var`, a `let` belongs to its block, can't be used before its line, and can't be declared twice in the same scope. It also can't be the whole body of an `if` without braces: `if (ready) var x = 1;` is fine, but with `let` it's a syntax error.<Cite id="mdn-let" /> None of that matters in this example, but a real var → let codemod would first check where each declaration stands, and every variable with the scope analysis from lesson 6.</Aside>
+
+Look at **x \*\* 2 → x \* x** in particular. The code says `weight / height ** 2`, and
+`**` binds tighter than `/`,<Cite id="mdn-precedence" /> so the tree is
+`weight / (height ** 2)`. Swapping the operator in the tree keeps that grouping, so both
+printers add the parentheses the new code needs. A find-and-replace on the text would have
+written `weight / height * height`, which divides by `height` and then multiplies by it
+again: the result is just `weight`. The text doesn't know which values belong to which
+operator. The tree does.
+
+The transform only does this when the left side is a plain name. Copying anything more
+is risky: `next() ** 2` would become `next() * next()`, which calls the function twice.
+The tree tells you what belongs together, but not whether it's safe to repeat.
+
+## Printing it back
+
+The tree has no blank lines, no comments in its nodes, and no memory of whether you
+wrote `'single'` or `"double"` quotes. Lesson 1 called this kind of tree *abstract*. So
+how can a tool print your code back without wrecking it? The two printers in the figure
+take opposite approaches.
+
+**astring** prints the whole tree from scratch.<Cite id="astring" /> The code is correct,
+but your blank lines are gone, and with its default settings so are your
+comments.<Cite id="astring" /> That's fine for a build tool whose output nobody reads.
+
+**recast** keeps your original text next to the tree. When it prints, it reuses that
+original text for every node you didn't touch and only prints the nodes you changed.<Cite id="recast" />
+Compare the counts under the two outputs: with recast, nearly every line is exactly as
+you wrote it. That's what a codemod needs, because its changes end up in your pull
+request. jscodeshift, a common tool for running codemods, is built on
+recast.<Cite id="jscodeshift" />
+
+<Aside>
+Formatters take the other route on purpose. Prettier reprints everything from scratch
+and removes the original styling; that's its job.<Cite id="prettier" /> It still keeps
+blank lines where you had them (though several in a row become one), and tries to keep each comment roughly where it was,
+which its own docs call a really difficult problem.<Cite id="prettier-rationale" />
+</Aside>
+
+## Taking the types out
+
+TypeScript is JavaScript with types added, and JavaScript engines don't understand the
+types. So the most basic TypeScript transform removes them. Node.js does that for you:
+run a `.ts` file and Node replaces the TypeScript syntax with spaces and runs what's left.
+It doesn't check the types; it only removes them.<Cite id="node-typescript" />
+
+Finding the types is a job for the tree. The `:` in `tax?: number` is a type annotation,
+but the `:` in `a ? b : c` and in `{ name: "pen" }` isn't, and only the tree can tell them
+apart. The figure parses your code with Babel's TypeScript support and blanks out every
+type node:
+
+<TypeStripper presets={typeStripPresets} />
+
+The highlighted parts of your code are the type nodes: annotations like `: number`, the
+`interface`, the `<T>` of a generic, the ` as number` and the `!` after a value. In the
+first output, each of them became spaces. That's exactly what Node produces; the course's
+tests compare the two character by character. It's also the shortcut from the margin note
+at the top: the tree only finds *where* the types are, and the text is edited there.
+
+Now pick **an enum**. Node refuses it, and so does the figure. An enum isn't just a type:
+`Size.Small` is a real value at runtime. Removing the declaration would break the code,
+and keeping it would mean generating new JavaScript, which Node deliberately doesn't do.
+The same goes for namespaces with values, parameter properties and
+`import =`.<Cite id="node-typescript" /> TypeScript's `erasableSyntaxOnly` option reports
+those constructs in your editor, so you find out before you run.<Cite id="ts-58" />
+
+## Finding your way back: source maps
+
+Why spaces, and not just cut the types out? Click a word in the second output, where they
+were cut. It sits at a different line and column than in your code. If that line threw an
+error, the stack trace would point at a place that doesn't exist in any file you wrote.
+In the first output, everything stays where you typed it, so Node doesn't need source maps
+to get its stack traces right.<Cite id="node-typescript" />
+
+Most tools can't keep everything in place. A minifier squeezes your code onto one line;
+a bundler merges many files into one. So they write a **source map** next to their
+output: a file that maps positions in the generated code back to the original source, so
+that debuggers and stack traces can show you your own code.<Cite id="mdn-source-map" /><Cite id="ecma426" />
+
+The map comes from the tree. Every node still carries the `start` and `end` positions of
+lesson 3, so when a printer writes a node, it knows where that node came from. astring,
+for example, writes a source map alongside its output, as long as the nodes carry their
+positions.<Cite id="astring" />
+
+<Check question="Which `?` and which `:` does type stripping remove here?" code={"function f(x?: number) {\n  return x ? x : 0;\n}"}>
+
+Only the two in `x?: number`: the `?` that makes the parameter optional, and the `:` that
+starts its type annotation. The `?` and `:` after `return` belong to a conditional
+expression, which is plain JavaScript. A find-and-replace sees four identical characters;
+the tree has an optional `Identifier` with a `TSTypeAnnotation` in one place, and a
+`ConditionalExpression` in the other.
+
+</Check>
+
+> tools change code by changing the tree and printing it again; what they keep depends on the printer.
+
+<Deeper about="visitors, how recast knows what changed, and what's inside a source map">
+
+### Visitors
+
+Real tools don't walk the tree with a loop like the figure's code does. You give them a
+**visitor**: an object with a method per node type, such as `VariableDeclaration(path) { … }`.
+The tool's own code that walks the tree, the **walker**, calls your method for every node
+of that type.<Cite id="babel-handbook" /> Lesson 8 uses the same pattern for lint rules,
+and shows what such a walker looks like.
+
+### How recast knows what changed
+
+When recast parses, it makes a copy of the tree for you to change, and every copied
+node keeps a link to the original node through a property called `.original`. When
+printing, a node that still matches its original can be printed as the original text.<Cite id="recast" />
+If recast can't reuse the original text for a changed node, it falls back to a generic
+printer, so the worst case is some harmless reformatting.<Cite id="recast" />
+
+### Inside a source map
+
+A source map is a JSON file. Its `mappings` field has an entry for every line of the
+generated code, listing segments: a column in that line, plus the source file, line and
+column it came from, and optionally the original name. The numbers are stored as Base64
+VLQs, short text codes for whole numbers, and most are counted relative to the previous
+segment to keep the file small. The generated file points to its map with a comment at
+the end, such as `//# sourceMappingURL=app.js.map`.<Cite id="ecma426" />
+
+</Deeper>

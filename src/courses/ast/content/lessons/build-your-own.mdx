@@ -1,0 +1,165 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { RuleLab } from "@/courses/ast/features/transform/RuleLab";
+import { rulePresets, ruleTarget } from "@/courses/ast/content/examples";
+
+You've seen trees, walks, scopes and transforms. That's everything you need to write a
+tool for your own codebase. This lesson writes the most common one: a lint rule for ESLint.
+
+## A rule is a visitor
+
+You don't write the walk yourself. An ESLint rule has a `create(context)` function that
+returns an object. Each key in that object is a node type, and ESLint calls that
+function for every node of that type while it walks the tree.<Cite id="eslint-custom-rules" />
+When something is wrong, the rule calls `context.report()` with the node and a
+message.<Cite id="eslint-custom-rules" />
+
+```js
+const rule = {
+  create(context) {
+    return {
+      VariableDeclaration(node) {
+        if (node.kind === "var") {
+          context.report({ node, message: "Use let or const instead of var." });
+        }
+      },
+    };
+  },
+};
+```
+
+That's a complete rule. The tree does the hard part: you never look for the text `var`
+or worry about comments and strings. You ask for one node type and read one field.
+
+## Who does the walking
+
+The code that walks the tree is called the **walker**, and ESLint brings its
+own.<Cite id="eslint-custom-rules" /> Stripped down to its core, it looks like this:
+
+```js
+function walk(node, visitor) {
+  visitor[node.type]?.(node);           // on the way down
+  for (const child of childrenOf(node)) {  // left, right, body, …
+    walk(child, visitor);
+  }
+  visitor[`${node.type}:exit`]?.(node); // on the way back up
+}
+```
+
+It starts at the root. At every node it looks for a method named after the node's type,
+like `VariableDeclaration`. If the visitor has one, the walker calls it; if not, it
+moves on. Then it steps into each child and does the same there. The rule only says
+*which* nodes it cares about; the walker makes sure it meets every one of them. The
+figure below runs a walker like this one.
+
+## Try it
+
+The rule on the left runs on the code on the right, in this page, every time you type.
+Every red mark is a node the rule reported:
+
+<RuleLab presets={rulePresets} code={ruleTarget} />
+
+Some things to try:
+
+- **no-var** has a `fix`. Press *Apply fixes* and the reported code is rewritten. A fix
+  is a text edit at the node's position, like the renames in lesson 6. ESLint requires
+  `meta.fixable` on rules that fix things; delete it and see what happens.<Cite id="eslint-custom-rules" />
+  As lesson 7 showed, var → let isn't always safe, so a real rule would only offer the
+  fix where scope analysis says nothing changes.
+- **no-console** uses `data` to fill in the `{{ method }}` part of the message, and
+  `context.sourceCode.getText()` to read the code of a node.<Cite id="eslint-custom-rules" />
+- **deepest nesting** uses `"BlockStatement:exit"`, which ESLint calls on the way back
+  *up* the tree, after a node's children.<Cite id="eslint-custom-rules" /> Counting up on
+  the way down and down on the way up gives you the depth.
+- Change `MAX` in **max-params**, or write a rule for something your team keeps
+  repeating in code review.
+
+<Aside>The figure runs a small subset of ESLint's rule API on the same kind of tree (ESTree). It's
+enough for these rules, but it has no options, selectors or scope analysis.</Aside>
+
+## Use it in your project
+
+A rule doesn't need to be published to npm. Put it in a file, with `export default rule;`
+at the end, and add it to your ESLint config as a *virtual plugin*, a plugin defined
+right in the config:<Cite id="eslint-local-plugin" />
+
+```js
+// eslint.config.js
+import { defineConfig } from "eslint/config";
+import noVar from "./rules/no-var.js";
+
+export default defineConfig([
+  {
+    plugins: {
+      local: { rules: { "no-var": noVar } },
+    },
+    rules: {
+      "local/no-var": "warn",
+    },
+  },
+]);
+```
+
+Now `npx eslint .` runs your rule on every file, and your editor shows its reports while
+you type.
+
+<Check question="Write the visitor for a rule that reports every `debugger` statement. Which node type do you ask for?">
+
+`DebuggerStatement`. The whole rule is one method:
+
+```js
+create(context) {
+  return {
+    DebuggerStatement(node) {
+      context.report({ node, message: "Remove debugger before committing." });
+    },
+  };
+}
+```
+
+Not sure what a node type is called? Type the code into the Explorer and read it off the
+tree. To try it, swap this visitor into one of the rules in the figure above and add a
+`debugger;` line to the code.
+
+</Check>
+
+> a lint rule is a visitor: name the node types you care about, and report what you find.
+
+<Deeper about="scope in rules, selectors, codemods">
+
+### Rules that know about scope
+
+The rules above look at one node at a time. Rules like `no-shadow` need to know what a
+name refers to. They ask ESLint for the scope of a node with `sourceCode.getScope(node)`,
+which gives them the same scope analysis as lesson 6.<Cite id="eslint-custom-rules" />
+
+### Selectors
+
+A key in the visitor doesn't have to be a node type. It can be a **selector**, a string
+that matches nodes in the tree, much like a CSS selector matches elements.<Cite id="eslint-selectors" />
+For example, this one matches only a member expression that's being called:
+
+```js
+"CallExpression > MemberExpression.callee"
+```
+
+### From a rule to a codemod
+
+A lint rule reports and fixes one file at a time while you work. To change a whole
+codebase at once, you'd write a codemod instead. A jscodeshift codemod is a function
+that receives a file and returns its new source, using recast underneath to keep your
+formatting, as lesson 7 showed.<Cite id="jscodeshift" />
+
+```js
+// Run with: npx jscodeshift -t var-to-let.js src/
+export default function transformer(file, api) {
+  const j = api.jscodeshift;
+  return j(file.source)
+    .find(j.VariableDeclaration)
+    .forEach((path) => {
+      if (path.node.kind === "var") path.node.kind = "let";
+    })
+    .toSource();
+}
+```
+
+</Deeper>

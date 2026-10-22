@@ -1,0 +1,108 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { ParserCompare } from "@/courses/ast/features/landscape/ParserCompare";
+import { parserPresets } from "@/courses/ast/content/examples";
+
+So far this course has used one parser, acorn. In practice there are many, and the
+tools you use every day don't share one. This lesson looks at the main ones, how their
+trees differ, and how many of them read your code before it ships.
+
+## Same code, different trees
+
+Here is the same code through three real parsers, running in this page:
+
+<ParserCompare presets={parserPresets} />
+
+With **JavaScript**, acorn and Babel agree on almost everything, but not all of it.
+Babel wraps the program in a `File` node, and where acorn has one `Literal` type, Babel
+has a type per kind of value, such as `NumericLiteral` and `StringLiteral`.<Cite id="babel-parser" />
+TypeScript's tree is its own design entirely: `VariableStatement` holds a
+`VariableDeclarationList`, and even the `*` is a node of its own, an `AsteriskToken`.
+
+Switch to **TypeScript** or **JSX**. Acorn stops at the type annotation or the tag,
+because it only parses standard JavaScript.<Cite id="acorn" /> Babel and TypeScript both
+handle them.
+
+<Aside>Break the code, for example by deleting the `2`. Acorn and Babel stop. TypeScript reports the problem but still builds a tree, which is what an editor needs while you're halfway through typing.</Aside>
+
+## ESTree: a shared shape
+
+Acorn's tree follows **ESTree**, a community standard for what a JavaScript tree looks
+like. It started as the format of Firefox's parser API, documented by a Mozilla
+engineer.<Cite id="estree" /> Because many parsers produce it, tools built on ESTree can
+switch parsers:
+
+- **Espree**, ESLint's default parser, is built on top of acorn.<Cite id="espree" /><Cite id="eslint-parser" />
+- **typescript-estree** converts TypeScript code into an ESTree-compatible tree, so ESLint
+  rules can run on TypeScript.<Cite id="ts-estree" />
+- **Oxc**'s parser, written in Rust, returns a tree that conforms to ESTree, the same as
+  acorn produces.<Cite id="oxc-parser" /><Cite id="oxc" />
+- **Babel** has an `estree` plugin that turns its own differences back into ESTree.<Cite id="babel-parser" />
+
+## How many times is your code parsed?
+
+Lesson 2 said that every tool parses your code again. Here's what that looks like for one
+`.js` file in a typical project with VS Code, Prettier, ESLint and Vite:
+
+| when | tool | parser |
+|---|---|---|
+| while you type | VS Code | TypeScript, through its language service<Cite id="vscode-js" /> |
+| on save | Prettier | `@babel/parser` by default for JavaScript<Cite id="prettier-options" /> |
+| on save or in CI | ESLint | Espree, its default parser<Cite id="eslint-parser" /> |
+| on build | Vite | Oxc, for parsing, transforming and minifying<Cite id="vite-why" /> |
+| in the browser | V8 | its own parser, as in lessons 2 and 5 |
+
+That's five parsers, each building its own tree, for one file, and a TypeScript project
+adds `tsc` on top.<Cite id="ts-compiler-api" /> Most tools can't reuse another's tree: they
+run in different processes, are written in different languages, and often use different
+shapes, as the figure shows.
+
+Newer toolchains are built to change that. Oxc is one project with a parser, linter,
+formatter, transformer and minifier, and the tree its parser builds, together with its
+scope analysis, can be handed straight on to the other tools, so one parse can serve
+several jobs.<Cite id="oxc-crate" /> Biome likewise puts its formatter and linter in a
+single toolchain.<Cite id="biome" />
+
+<Check question="Acorn stops at `const n: number = 1`, and ESLint's default parser is built on acorn. So how can ESLint lint TypeScript?">
+
+You swap the parser. typescript-estree reads TypeScript and builds an ESTree-compatible
+tree, and ESLint's rules only care that the tree has ESTree's shape. The rules from lesson
+8 run unchanged on TypeScript, which is exactly what a shared tree format is for.
+
+</Check>
+
+## The whole road
+
+That's the course. Your code starts as characters, gets cut into tokens, and is arranged
+into a tree. The engine works out what each name means, flattens the tree into bytecode
+and runs it. Tools leave the road at the tree: they work out the same names, then check
+the code, change it and print it again. Every one of them parses your code for itself.
+
+To keep going, paste some of your own code into the [Explorer](/explorer) and read its
+tree, or take a rule from lesson 8 and turn it into one your team actually needs.
+
+> many parsers, many tree shapes; ESTree is the common one, and most tools still parse your code for themselves.
+
+<Deeper about="faster parsers, positions and trivia">
+
+### Faster parsers
+
+Because parsing happens so often, newer tools write their parsers in languages that
+compile to native code. esbuild is written in Go,<Cite id="esbuild-faq" /> SWC and Oxc in
+Rust.<Cite id="swc" /><Cite id="oxc" /> Rollup 4 switched its parser to one based on SWC to
+parse faster.<Cite id="rollup-changelog" /> The TypeScript team started porting the compiler
+itself to Go in 2025,<Cite id="ts-native" /> and TypeScript 7, the result, is typically 8
+to 12 times faster on full builds.<Cite id="ts-7" />
+
+### Positions and trivia
+
+Hover `total` in TypeScript's tree: it starts after the space, like in the other trees.
+Internally, TypeScript gives every token two starts: the *token start*, where its text
+begins, and the *full start*, before the whitespace and comments in front of it. That
+whitespace and those comments are called **trivia**. They're not part of the tree, but
+TypeScript keeps them reachable from it, because features like refactoring need them to
+stay faithful to your text.<Cite id="ts-scanner" /> It's the same problem lesson 7 solved
+with recast. Biome goes further: its parser builds a concrete syntax tree, with trivia
+attached to the tokens before and after it, and it keeps going after a syntax error,
+which a formatter running while you type needs.<Cite id="biome-architecture" />
+
+</Deeper>

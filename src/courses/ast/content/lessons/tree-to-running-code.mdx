@@ -1,0 +1,102 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { BytecodeView } from "@/courses/ast/features/runtime/BytecodeView";
+
+Lesson 4 ended with a finished tree. A tree can't run by itself, though. The engine first
+turns it into **bytecode**: a flat list of simple instructions. This lesson looks at how
+that happens, using real output from V8, the engine in Chrome and Node.
+
+## Walk the tree, write instructions
+
+You've already seen the idea in lesson 2. The little machine there walked the tree
+children first and wrote down one step for each node: `get price`, `get quantity`,
+`multiply`. A real engine does the same thing. In V8, the parser builds the tree, and
+a bytecode generator walks that tree and writes bytecode.<Cite id="v8-scanner" /><Cite id="v8-background" />
+Then V8's interpreter, **Ignition**, runs the bytecode one instruction at a
+time.<Cite id="v8-ignition" /> The generator is part of Ignition too, so you'll often see
+the whole pipeline called by that name.
+
+## What V8 makes of it
+
+Here is a small function, with the bytecode V8 generated for it. Hover an instruction to
+see which node it came from, or hover a node to see its instructions:
+
+<BytecodeView example="total" title="A function and its bytecode" />
+
+Read it top to bottom: load `quantity`, multiply by `price`, put the result aside, load
+`tax`, add the result back, return. That's the tree, flattened. Two things work
+differently from lesson 2's machine:
+
+- **One working value instead of a pile.** Lesson 2's machine stacked values up. V8 keeps
+  a single current value, the **accumulator**, and a few numbered **registers** to put
+  things aside.<Cite id="hinkelmann-bytecode" /><Cite id="v8-ignition" /> The parameters
+  already have registers: `a0` is `price`, `a1` is `quantity`.
+- **Each instruction is a few bytes.** `Ldar a1` is really just the two bytes `0b 04`.
+  That compact encoding is where the name *bytecode* comes from.<Cite id="nystrom-bytecode" />
+
+Notice that there's no instruction that loads `price`. That isn't V8 changing the order:
+JavaScript always evaluates operands from left to right, whatever the
+precedence.<Cite id="mdn-precedence" /> But `price` is a parameter, so it's already in
+register `a0`, and `Mul a0` can read it from there directly. Only `quantity` has to be
+loaded into the accumulator first. The tree tells the compiler what has to happen; the
+compiler picks the cheapest instructions that do it.
+
+<Aside>Ignore the `FBV[…]` parts for now. "Going deeper" at the end explains them.</Aside>
+
+## Branches become jumps
+
+A tree has an *inside*: the `return a` lives inside the `if`. A flat list of instructions
+has no inside. So how does an `if` survive the flattening? It becomes a **test** followed
+by a **jump**: if the test fails, skip over the instructions of the branch.<Cite id="nystrom-jumping" />
+
+<BytecodeView example="max" title="An if statement and its bytecode" />
+
+Hover `JumpIfFalse`. If `a > b` turns out false, execution doesn't continue with the next
+instruction: it jumps ahead to `@ 11`, past the first `return`. Loops work the same way,
+with a jump *backwards* to the start of the loop.<Cite id="nystrom-jumping" />
+
+So the nesting in the tree turns into two things in the bytecode: **order** (children
+first) and **jumps** (for anything that may or may not run).
+
+## Then the tree is thrown away
+
+Once the bytecode exists, the tree has done its job. V8 doesn't keep it around, and it
+goes further than that to save time and memory:
+
+- **Functions are compiled when they're needed.** A function that isn't called right
+  away is only *pre-parsed*: checked for errors, but without building its tree. It gets
+  its full tree and bytecode the first time it's called.<Cite id="v8-preparser" />
+- **Even bytecode can go.** Bytecode for functions that haven't run in a while gets
+  thrown away, and compiled again if the function is ever called again.<Cite id="v8-74" />
+
+The tree is a means to an end: built to understand the code, used to write the
+instructions, then gone. Tools are different. For a linter or a formatter, the tree *is*
+the end product, and that's where the next lessons go.
+
+<Check question="A `while` loop is an `if` that repeats. What would its bytecode have that the `max` example doesn't?">
+
+A jump *backwards*. The test and the conditional jump look just like the `if`: when the
+condition is false, jump past the body. At the end of the body comes one more jump, back
+to the test, so it runs again.
+
+</Check>
+
+> bytecode is the tree flattened into steps: nesting becomes order, and branches become jumps.
+
+<Deeper about="feedback, and V8's faster compilers">
+
+### What FBV means
+
+`FBV[1]` in `Mul a0, FBV[1]` points to a slot in the function's **feedback vector**. While
+the bytecode runs, V8 records what it sees there, such as which kinds of values were
+multiplied. That information is used later to make the code faster.<Cite id="hinkelmann-bytecode" />
+
+### After bytecode
+
+Bytecode isn't the end of the road for code that runs a lot. V8 has compilers that start
+*from the bytecode*, not from the source or the tree, and turn frequently used functions
+into machine code: Sparkplug quickly, and TurboFan with heavy
+optimization.<Cite id="v8-sparkplug" /> Since 2023, Maglev sits between those two: it
+optimizes, but compiles about ten times faster than TurboFan.<Cite id="v8-maglev" /> The optimizing compilers use the feedback vector to decide how to
+optimize. The tree is long gone by then.
+
+</Deeper>

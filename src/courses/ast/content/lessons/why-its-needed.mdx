@@ -1,0 +1,149 @@
+import { Aside, Check, Cite } from "@/features/lesson/authoring";
+import { RenameComparison } from "@/courses/ast/features/scope/RenameComparison";
+import { RunCode } from "@/courses/ast/features/runtime/RunCode";
+import { RunTheTree } from "@/courses/ast/features/runtime/RunTheTree";
+import { ToolGrid } from "@/courses/ast/features/landscape/ToolGrid";
+import { renameExample, runExamples } from "@/courses/ast/content/examples";
+
+Text is a fine way to *write* code. But you can't run text, check it or safely change it.
+For all of that you need to know what each part of the text *is*, and that means building
+a tree first.
+
+## A tree can be run
+
+To run `price * quantity + tax`, a computer needs a list of steps in the right order:
+multiply first, then add. The text doesn't hold that order. The `*` happens to come
+first here, but in `price * (quantity + tax)` the addition has to happen first, even
+though it's written last.
+
+The tree does hold it: an operation can only run once its children have a value. The
+simplest way to use that is to **evaluate the tree directly**: to get the value of a node,
+first get the values of its children, then apply its operator. That's called a
+*tree-walking interpreter*. It's easy to write, but slow, because every step follows a
+pointer to a node somewhere else in memory.<Cite id="nystrom-bytecode" />
+
+So engines **walk** the tree once, ahead of time: they visit every node, starting at the
+root and stepping down into each child, and write down one step per node, children before
+their parent. Running the code is then just carrying out those steps in order:<Cite id="nystrom-vm" />
+
+<RunTheTree code="price * quantity + tax" values={{ price: 10, quantity: 2, tax: 3 }} />
+
+Press **Step** and watch each step light up its node in the tree. Then change the code to
+`price * (quantity + tax)`. The text barely changes, but the tree does, and so do the
+steps.
+
+This is the heart of how an engine runs your code. The steps above are a simplified,
+readable version of what engines call **bytecode**: the tree, flattened into a list of
+simple instructions, so the engine no longer has to hop from node to node. A real engine stores each instruction as a few compact bytes, which
+is where the name comes from,<Cite id="nystrom-bytecode" /> and it has a couple of hundred kinds of instruction instead
+of four.<Cite id="v8-ignition" /> But the idea is the same, and so is the dependency: without the tree there's
+nothing to flatten, only text.<Cite id="hinkelmann-bytecode" />
+
+<Check question="Before you press Step: in what order will the steps for `price * (quantity + tax)` run?">
+
+`get price`, `get quantity`, `get tax`, `add`, `multiply`. Children come before their
+parent, so the `+` (a child of the `*`) has to finish first, and the `*` at the root
+comes last. The operands are still fetched from left to right, which is why `price` is
+fetched first even though it's used last.
+
+</Check>
+
+## The engine parses everything first
+
+Before a single line of your code runs, the engine parses all of it, at least far enough to find every syntax error. You can see this for
+yourself. Both examples below have a bug on the third line. Run each one:
+
+<RunCode examples={runExamples} />
+
+<Aside>The demo hands your code to `new Function`, which, like a script tag, parses the whole body before running any of it.<Cite id="mdn-function" /></Aside>
+
+With the **syntax error**, nothing is printed, not even the two lines *before* the
+mistake. The engine couldn't build a tree, so it never started running. With the
+**runtime error**, the code parsed fine, the first two lines ran, and only then did
+something go wrong.
+
+That is the difference between the two kinds of error. Syntax errors are found while
+building the tree, before anything runs. Runtime errors are found while running it.
+
+### Why understand everything before running anything?
+
+It would be simpler to read one line, run it, then read the next. JavaScript engines
+deliberately don't, for three reasons.
+
+**A typo should never leave things half done.** The language specification requires
+that a script with a syntax error doesn't run at all.<Cite id="ecma-early-errors" /> Imagine a script that charges a
+payment on line 10 and records it on line 20, with a typo on line 15. Running the first
+half, then stopping at the typo, would leave a payment that was made but never recorded.
+Not starting at all is far safer.
+
+**Code depends on code further down.** You can call a function before the line that
+declares it:<Cite id="mdn-hoisting" />
+
+```js
+greet("Ada");
+function greet(name) {
+  console.log(`Hello, ${name}`);
+}
+```
+
+On the first line, `greet` only makes sense because of what comes later. To make sense of
+it, the engine needs the whole structure in front of it, and the tree is that structure.
+
+**Understand once, run many times.** A loop body may run a million times. Working out what
+the code means once, and turning that into instructions the engine can run directly, is
+far faster than reading the text again on every pass.
+
+So for the engine, the tree is a means to an end. It builds the tree, flattens it into
+bytecode, and then throws it away. Lesson 5 shows how that happens, and why engines are clever about
+*when* they build each part of the tree.<Cite id="v8-preparser" />
+
+## Every tool needs it too
+
+Almost every tool that touches your code starts the same way: by parsing it into a tree.<Cite id="eslint-rules" />
+
+<ToolGrid />
+
+None of these tools could do their job with text alone. A formatter<Cite id="prettier-intro" /> that only saw
+characters couldn't tell a `{` that opens an object from one that opens a block. A
+bundler<Cite id="rollup-intro" /> couldn't tell a real `import` from the word "import" in a string.
+
+The engine's tree is private and short-lived, so none of these tools can borrow it. Each
+one parses your code again and builds its own tree. Where the engine only needs the
+tree for a moment on the way to running your code, for a tool the tree *is* the point:
+it's what they inspect, check and change. Lesson 9 looks at how many times your code gets
+parsed on its way to production.
+
+## Why not just work on text?
+
+Let's try. Rename the variable `count` to `total`, once with find-and-replace (whole words
+only, so `counter` is safe), and once using the tree:
+
+<RenameComparison code={renameExample} from="count" to="total" />
+
+<Aside>A plain search for `count` would also have hit `counter`. Whole-word matching is already the careful version.</Aside>
+
+Find-and-replace changed four things it shouldn't have:
+
+- **The comment.** Harmless, but wrong.
+- **The string** `"count: "`. Now the page shows different text.
+- **The shorthand property** `{ count }`. It silently became `{ total }`, so the object
+  now has a different shape.
+- **The property access** `stats.count`. It now reads a property that doesn't exist.
+
+The tree knows the difference.<Cite id="estree" /> In `stats.count`, `count` is the `property` of a
+`MemberExpression`, not a variable. In `{ count }`, it's both a property name and a
+variable, so the right rename is `{ count: total }`. The string is a `Literal` node with no
+identifiers inside it, and the comment isn't in the tree at all.
+
+The AST version isn't perfect yet, though. If a function declared its *own* `count`, this
+rename would change that one too. Knowing which declaration an identifier refers to takes
+*scope analysis*, built on top of the tree. That's lesson 6.
+
+<Check question="A file has `console.log(1)` on line 1 and `if (ready {` on line 50. What does running it print?">
+
+Nothing. `if (ready {` is a syntax error, so the engine can't build a tree for the file, and
+without a tree nothing runs, not even line 1.
+
+</Check>
+
+> text has no idea what a word *is*; the tree does.

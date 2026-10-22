@@ -1,0 +1,53 @@
+{
+  "name": "practice-ast",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.0.7",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@fontsource-variable/source-serif-4": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@lezer/highlight": "^1.2.5",
+    "@mdx-js/react": "^3.1.1",
+    "@stylexjs/stylex": "^0.19.1",
+    "@tanstack/react-router": "^1.170.45",
+    "@tanstack/react-start": "^1.169.3",
+    "acorn": "^8.19.0",
+    "astring": "^1.9.0",
+    "eslint-scope": "^9.1.2",
+    "motion": "^14.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "recast": "^0.24.0",
+    "typescript5": "npm:typescript@^5.9.3"
+  },
+  "devDependencies": {
+    "@mdx-js/rollup": "^3.1.1",
+    "@shikijs/rehype": "^4.5.0",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@types/estree": "^1.0.9",
+    "@types/mdx": "^2.0.14",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "lightningcss": "^1.33.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.5.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

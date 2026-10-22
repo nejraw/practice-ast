@@ -1,0 +1,87 @@
+import { Aside, Check, Cite } from "@/features/lesson/authoring";
+import { CharacterStrip } from "@/courses/ast/features/tokenizing/CharacterStrip";
+import { CompareTrees } from "@/courses/ast/features/parsing/CompareTrees";
+import { ExpressionTree } from "@/courses/ast/features/parsing/ExpressionTree";
+
+When you read `price * quantity + tax`, you see the structure straight away: multiply
+first, then add. The engine sees none of that. It receives a string:
+
+<CharacterStrip code="price * quantity + tax" />
+
+<Aside>Spaces are characters too (shown as `␣`). The engine has to read past every one of them.</Aside>
+
+Everything the engine will ever know about your program has to be recovered from those
+characters. The result of that work is an **Abstract Syntax Tree**, or AST<Cite id="wiki-ast" />:
+
+<ExpressionTree code="price * quantity + tax" />
+
+<Aside>This lesson jumps from characters straight to the tree. Lessons 3 to 5 fill in the steps in between, and what comes after.</Aside>
+
+## Reading the tree
+
+- Every box is a **node**. Its **type** is on top (`BinaryExpression`, `Identifier`), and
+  the most telling detail, such as the operator or the name, is below it.
+- The lines are labelled with **field names**. A `BinaryExpression` has a `left` and a
+  `right`. These are the actual property names you would use in code: `node.left.operator`.
+- The **leaves** are names (`Identifier`) and values (`Literal`).
+- The **root** is the operation that is evaluated *last*: the `+`. The `*` sits deeper
+  because its result is needed first.<Cite id="nystrom-representing" />
+
+Edit the code above: change `*` to `+`, add parentheses around `quantity + tax`, or try
+`a = b = c`. Hover a box to see which part of the source it covers.
+
+<Aside>For bigger code, the [Explorer](/explorer) shows the full tree of anything you paste into it.</Aside>
+
+## What the name means
+
+| Word | Meaning |
+| --- | --- |
+| **Abstract** | Only the meaning is kept. Whitespace, comments and parentheses that don't change the meaning disappear.<Cite id="wiki-ast" /> |
+| **Syntax** | The tree follows the grammar of the language: which constructs exist and how they can nest. |
+| **Tree** | One root with no parent, and every other node has exactly one. |
+
+## How it was typed doesn't matter
+
+This is the *abstract* part. Compare the tree on the left with each of the variants:
+
+<CompareTrees
+  left="price * quantity + tax"
+  variants={["(price * quantity) + tax", "price*quantity+tax", "price * (quantity + tax)"]}
+/>
+
+The first two variants look different but produce the **same tree**. Parentheses don't get
+a node of their own: they only influence the *shape* of the tree, and once the shape is
+built they are no longer needed.<Cite id="nystrom-representing" /> The third variant changes the meaning, so the tree
+changes with it.
+
+<Aside>A tree that keeps every token, including parentheses, whitespace and comments, is a *concrete* syntax tree.<Cite id="wiki-parse-tree" /> Formatters and codemods need that detail; lesson 7 shows how they get it back.</Aside>
+
+## It's just objects
+
+There is nothing magical about the tree. It is a plain data structure: nested objects with
+a `type` field. This is `price * quantity`:
+
+```json
+{
+  "type": "BinaryExpression",
+  "operator": "*",
+  "left": { "type": "Identifier", "name": "price" },
+  "right": { "type": "Identifier", "name": "quantity" }
+}
+```
+
+This shape is called **ESTree**.<Cite id="estree" /> Most JavaScript tools use it or a close
+variant of it, and it's what you'll see throughout this course, produced by the Acorn
+parser.<Cite id="acorn" /> Lesson 9 compares it with the trees other parsers build. Real nodes
+also carry `start` and `end` positions, pointing back into the source text; they are left
+out here for readability.
+
+<Check question="Which of these has a `+` at the root of its tree: `a * b + c`, `a * (b + c)` or `a + b * c`?">
+
+`a * b + c` and `a + b * c`. In both, the `*` is evaluated first, so it sits deeper and
+the `+` is the root. In `a * (b + c)` the parentheses make the `+` happen first, so the
+`*` is the root. Paste them into the figure above to check.
+
+</Check>
+
+> an AST captures what the code *means*, not how it was typed.

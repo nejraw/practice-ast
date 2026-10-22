@@ -1,0 +1,115 @@
+import { Aside, Check, Cite, Deeper } from "@/features/lesson/authoring";
+import { ScopeRename } from "@/courses/ast/features/scope/ScopeRename";
+import { ScopeView } from "@/courses/ast/features/scope/ScopeView";
+import { scopePresets, shadowRenameExample } from "@/courses/ast/content/examples";
+
+The tree records what the code *says*. It doesn't record what the names *mean*. Look at
+this:
+
+```js
+let count = 0;
+
+function tally(items) {
+  let count = 0;
+  // …
+  return count;
+}
+```
+
+There are two variables here, both called `count`. In the tree, every one of those names
+is the same kind of node: an `Identifier` with `name: "count"`. Nothing in the tree says
+that the `count` in `return count` belongs to the inner declaration and not the outer
+one. Working that out is a separate step, called **scope analysis**: for every name,
+find the declaration it refers to.<Cite id="nystrom-resolving" /> The link between a name
+and its declaration is called a **binding**.
+
+## Scopes
+
+The rules come from **scopes**. A function creates a scope, and so does a block in curly
+braces, for variables declared with `let`, `const` or `class`.<Cite id="mdn-scope" /> To
+find what a name refers to, start in the scope where the name is used and look for a
+declaration there. If there isn't one, look in the surrounding scope, and so on
+outward.<Cite id="mdn-closures" /> When an inner scope declares a name that an outer scope
+already has, the inner one wins inside it: the outer variable is **shadowed**.<Cite id="wiki-shadowing" />
+
+Try it. Click any variable name in the code:
+
+<ScopeView presets={scopePresets} />
+
+In **Two counts**, click the `count` in `return count`: only the inner variable lights up.
+Click the one on the last line, and you get the outer one. The tree is the same for both;
+scope analysis is what tells them apart. The green mark is the declaration, the yellow
+marks are the places it's used.
+
+<Aside>The analysis behind this figure is eslint-scope, the same scope analyzer ESLint uses.<Cite id="eslint-scope" /></Aside>
+
+## Renaming, done right
+
+Lesson 2 ended with a promise. Its tree-based rename never touched strings or property
+names, but it renamed *every* variable called `count`, including a different one inside
+another function. With scope analysis, a rename can follow one binding instead of one
+name:
+
+<ScopeRename code={shadowRenameExample} at={5} to="total" />
+
+The left side does what lesson 2 did and also renames the `count` inside `tally`, which
+is a different variable; those changes are marked red. The right side renames exactly the
+names bound to the declaration you picked, and still turns `{ count }` into
+`{ count: total }`. This is what your editor's "rename symbol" does.
+
+## Why the engine needs it too
+
+Scope analysis isn't just for tools: the engine needs it too. In lesson 5, `price` and `quantity` lived in registers `a0` and
+`a1`. A register only exists while the function runs. But pick **A closure** above and
+click `count`: an inner function uses it, so it has to survive after `counter()` has
+returned.
+
+Engines solve this by checking, before generating bytecode, which variables inner
+functions use. Those variables are stored in a separate structure on the heap, a
+**context**, instead of in a register.<Cite id="v8-preparser" /> `label` isn't used by the
+inner function, so it can stay in a register and disappear when the call ends. The
+compiler can only make that choice because scope analysis ran first.
+
+## One more layer: types
+
+Scope analysis answers *which declaration* a name means. A type checker adds the next
+question: *what kind of value* does it hold? It's built in the same layers. TypeScript's
+**binder** walks the tree first and creates a symbol for each declaration, keeping track
+of scopes as it goes, much like the figure above. Its **checker** then uses those symbols
+to look names up, and works out their types from their declarations.<Cite id="ts-binder" />
+
+So meaning is stacked on the tree in layers: the tree says what's written, bindings say
+which declaration each name means, and types say what each value can be. Every layer
+needs the one below it, which is why lesson 9's TypeScript compiler parses your code for
+itself instead of borrowing a tree from another tool.
+
+<Check question="What happens when you call `f()`?" code={"let x = 1;\n\nfunction f() {\n  console.log(x);\n  let x = 2;\n}"}>
+
+A `ReferenceError`. The `let x` inside `f` belongs to the function's whole block, so the
+`x` in `console.log(x)` already refers to the *inner* declaration, not the outer one. That
+declaration hasn't been reached yet: `x` is in its temporal dead zone ("Going deeper"
+explains it). Paste it into your browser's console to see for yourself.
+
+</Check>
+
+> the tree says what the code says; scope analysis says which declaration each name means.
+
+<Deeper about="scopes in ESLint, var and the dead zone">
+
+### How ESLint uses scopes
+
+Many lint rules are really questions about bindings. `no-unused-vars` looks for
+variables that are declared and never used; `no-shadow` looks for a variable that shares
+its name with one in an outer scope.<Cite id="eslint-no-unused" /><Cite id="eslint-no-shadow" />
+Rules get this information by asking for the scope of a node, with
+`sourceCode.getScope(node)`.<Cite id="eslint-custom-rules" />
+
+### `var` and the dead zone
+
+Not every declaration follows the block rules. `var` belongs to the whole function, not
+to the block it's written in. `let` and `const` do belong to their block, and they can't be
+used before the line that declares them, even though their scope starts at the top of the
+block. That stretch is called the **temporal dead zone**.<Cite id="mdn-let" /> Change a
+`let` to `var` in the **Blocks** example and watch which scope the variable moves to.
+
+</Deeper>
